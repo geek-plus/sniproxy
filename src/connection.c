@@ -38,11 +38,6 @@
 #include <arpa/inet.h>
 #include <ev.h>
 #include <assert.h>
-
-#ifdef HAVE_ALLOCA_H
-#include <alloca.h>
-#endif
-
 #include "connection.h"
 #include "resolv.h"
 #include "address.h"
@@ -345,7 +340,7 @@ reactivate_watcher(struct ev_loop *loop, struct ev_io *w,
 static void
 parse_client_request(struct Connection *con) {
     const char *payload;
-    ssize_t payload_len = buffer_coalesce(con->client.buffer, (const void **)&payload);
+    size_t payload_len = buffer_coalesce(con->client.buffer, (const void **)&payload);
     char *hostname = NULL;
 
     int result = con->listener->protocol->parse_packet(payload, payload_len, &hostname);
@@ -378,7 +373,7 @@ parse_client_request(struct Connection *con) {
     }
 
     con->hostname = hostname;
-    con->hostname_len = result;
+    con->hostname_len = (size_t)result;
     con->state = PARSED;
 }
 
@@ -558,7 +553,6 @@ initiate_server_connect(struct Connection *con, struct ev_loop *loop) {
             return;
         }
 
-        result = 0;
         int tries = 5;
         do {
             result = bind(sockfd,
@@ -737,21 +731,27 @@ log_connection(struct Connection *con) {
 static void
 log_bad_request(struct Connection *con __attribute__((unused)), const char *req, size_t req_len, int parse_result) {
     size_t message_len = 64 + 6 * req_len;
-    char *message = alloca(message_len);
+    char *message = malloc(message_len);
+    if (message == NULL) {
+        err("log_bad_request: unable to allocate message buffer");
+        return;
+    }
     char *message_pos = message;
     char *message_end = message + message_len;
 
-    message_pos += snprintf(message_pos, message_end - message_pos,
+    message_pos += snprintf(message_pos, (size_t)(message_end - message_pos),
                             "parse_packet({");
 
     for (size_t i = 0; i < req_len; i++)
-        message_pos += snprintf(message_pos, message_end - message_pos,
+        message_pos += snprintf(message_pos, (size_t)(message_end - message_pos),
                                 "0x%02hhx, ", (unsigned char)req[i]);
 
     message_pos -= 2;/* Delete the trailing ', ' */
-    message_pos += snprintf(message_pos, message_end - message_pos,
-                            "}, %ld, ...) = %d", req_len, parse_result);
+    snprintf(message_pos, (size_t)(message_end - message_pos), "}, %ld, ...) = %d",
+             req_len, parse_result);
     debug("%s", message);
+
+    free(message);
 }
 
 /*
@@ -783,39 +783,39 @@ print_connection(FILE *file, const struct Connection *con) {
         case ACCEPTED:
             fprintf(file, "ACCEPTED      %s %zu/%zu\t-\n",
                     display_sockaddr(&con->client.addr, client, sizeof(client)),
-                    con->client.buffer->len, con->client.buffer->size);
+                    buffer_len(con->client.buffer), buffer_size(con->client.buffer));
             break;
         case PARSED:
             fprintf(file, "PARSED        %s %zu/%zu\t-\n",
                     display_sockaddr(&con->client.addr, client, sizeof(client)),
-                    con->client.buffer->len, con->client.buffer->size);
+                    buffer_len(con->client.buffer), buffer_size(con->client.buffer));
             break;
         case RESOLVING:
             fprintf(file, "RESOLVING      %s %zu/%zu\t-\n",
                     display_sockaddr(&con->client.addr, client, sizeof(client)),
-                    con->client.buffer->len, con->client.buffer->size);
+                    buffer_len(con->client.buffer), buffer_size(con->client.buffer));
             break;
         case RESOLVED:
             fprintf(file, "RESOLVED      %s %zu/%zu\t-\n",
                     display_sockaddr(&con->client.addr, client, sizeof(client)),
-                    con->client.buffer->len, con->client.buffer->size);
+                    buffer_len(con->client.buffer), buffer_size(con->client.buffer));
             break;
         case CONNECTED:
             fprintf(file, "CONNECTED     %s %zu/%zu\t%s %zu/%zu\n",
                     display_sockaddr(&con->client.addr, client, sizeof(client)),
-                    con->client.buffer->len, con->client.buffer->size,
+                    buffer_len(con->client.buffer), buffer_size(con->client.buffer),
                     display_sockaddr(&con->server.addr, server, sizeof(server)),
-                    con->server.buffer->len, con->server.buffer->size);
+                    buffer_len(con->server.buffer), buffer_size(con->server.buffer));
             break;
         case SERVER_CLOSED:
             fprintf(file, "SERVER_CLOSED %s %zu/%zu\t-\n",
                     display_sockaddr(&con->client.addr, client, sizeof(client)),
-                    con->client.buffer->len, con->client.buffer->size);
+                    buffer_len(con->client.buffer), buffer_size(con->client.buffer));
             break;
         case CLIENT_CLOSED:
             fprintf(file, "CLIENT_CLOSED -\t%s %zu/%zu\n",
                     display_sockaddr(&con->server.addr, server, sizeof(server)),
-                    con->server.buffer->len, con->server.buffer->size);
+                    buffer_len(con->server.buffer), buffer_size(con->server.buffer));
             break;
         case CLOSED:
             fprintf(file, "CLOSED        -\t-\n");
